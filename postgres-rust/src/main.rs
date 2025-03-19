@@ -1,18 +1,37 @@
+// Cargo.toml
+/*
+[package]
+name = "mcp-postgres-server"
+version = "0.1.0"
+edition = "2021"
 
+[dependencies]
+tokio = { version = "1.32", features = ["full"] }
+tokio-postgres = "0.7"
+postgres-types = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bytes = "1.5"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+dotenv = "0.15"
+*/
 
 use anyhow::{Context, Result};
 use bytes::{Buf, BufMut, BytesMut};
 use postgres_types::Type;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env, sync::Arc};
+use std::env;
+use std::sync::Arc;
 use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::Mutex,
 };
-use tokio_postgres::{Client, NoTls, Row};
-use tracing::{error, info, instrument, warn};
+use tokio_postgres::{Client, NoTls};
+use tracing::{error, info, instrument};
 
 // MCP Protocol message types
 const MSG_TYPE_QUERY: u8 = 1;
@@ -191,17 +210,24 @@ impl DbConnection {
                         serde_json::to_value(val)?
                     },
                     &Type::JSON | &Type::JSONB => {
-                        let val: Option<serde_json::Value> = row.get(i);
-                        serde_json::to_value(val)?
+                        // Fix: Convert JSON type data to string first
+                        let val: Option<String> = row.get(i);
+                        match val {
+                            Some(json_str) => {
+                                let parsed: serde_json::Value = serde_json::from_str(&json_str)?;
+                                serde_json::to_value(Some(parsed))?
+                            },
+                            None => serde_json::to_value(None::<serde_json::Value>)?
+                        }
                     },
                     &Type::TIMESTAMP | &Type::TIMESTAMPTZ => {
-                        let val: Option<String> = row.try_get(i)
-                            .unwrap_or_else(|_| Some(format!("{:?}", row.get::<_, tokio_postgres::types::Timestamp>(i))));
+                        // Fix: Get timestamp as string to avoid generic parameter issues
+                        let val: Option<String> = row.get(i);
                         serde_json::to_value(val)?
                     },
                     &Type::DATE => {
-                        let val: Option<String> = row.try_get(i)
-                            .unwrap_or_else(|_| Some(format!("{:?}", row.get::<_, tokio_postgres::types::Date>(i))));
+                        // Fix: Get date as string to avoid generic parameter issues
+                        let val: Option<String> = row.get(i);
                         serde_json::to_value(val)?
                     },
                     _ => {
