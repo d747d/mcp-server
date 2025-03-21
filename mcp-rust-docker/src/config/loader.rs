@@ -9,7 +9,7 @@ pub fn load_config<P: AsRef<Path>>(path: Option<P>) -> Result<ServerConfig> {
 
     // Start with default settings
     builder = builder.add_source(File::from_str(
-        include_str!("../../config/default.yaml"),
+        include_str!("../config/default.yaml"),
         config::FileFormat::Yaml,
     ));
 
@@ -23,11 +23,10 @@ pub fn load_config<P: AsRef<Path>>(path: Option<P>) -> Result<ServerConfig> {
     }
 
     // Add environment variables with prefix DOCKER_MCP_
-    builder = builder.add_source(
-        Environment::with_prefix("DOCKER_MCP")
-            .separator("_")
-            .prefix_separator("_"),
-    );
+    builder = builder.add_source(File::from_str(
+        include_str!("../config/default.yaml"),
+        config::FileFormat::Yaml,
+    ));
 
     // Build and deserialize the config
     let config = builder

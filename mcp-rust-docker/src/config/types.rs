@@ -53,6 +53,9 @@ pub struct DockerSettings {
     /// Whether to enable read-only mode (prevents modifications)
     #[serde(default)]
     pub read_only: bool,
+    /// Maximum log size to return in bytes
+    #[serde(default = "default_max_log_size")]
+    pub max_log_size: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -39,6 +39,10 @@ impl McpServer {
         }
     }
 
+    pub fn get_transport_type(&self) -> &crate::config::types::TransportType {
+        &self.config.server.transport
+    }
+
     pub async fn initialize(&self) -> Result<(), McpError> {
         // Register tools
         let mut tools = self.tools.write().await;
@@ -68,10 +72,6 @@ impl McpServer {
                 }),
             },
         );
-
-        pub fn get_transport_type(&self) -> &config::types::TransportType {
-            &self.config.server.transport
-        }
 
         tools.insert(
             "container-start".to_string(),
@@ -764,11 +764,16 @@ impl McpServer {
     }
 
     fn error_response(&self, id: JsonRpcId, error: McpError) -> JsonRpcResponse {
+        let error_json = error.to_json_rpc_error();
         JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
             id,
             result: None,
-            error: Some(error.to_json_rpc_error()),
+            error: Some(crate::protocol::types::JsonRpcError {
+                code: error_json.code,
+                message: error_json.message,
+                data: error_json.data,
+            }),
         }
     }
 }

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use governor::{Quota, RateLimiter as Governor};
 use governor::clock::{DefaultClock, ReasonablyRealtime};
+use governor::state::InMemoryState;
 use std::num::NonZeroU32;
 use url::Url;
 
@@ -8,10 +9,11 @@ use crate::config::types::{RateLimitSettings, SecuritySettings};
 use crate::protocol::error::McpError;
 use crate::protocol::types::{CallToolRequest, ReadResourceRequest};
 
+
 // Rate limiter implementation using Governor crate
 pub struct RateLimiter {
     settings: RateLimitSettings,
-    governor: Option<Arc<Governor<String, DefaultClock>>>,
+    governor: Option<Arc<Governor<String, InMemoryState, DefaultClock>>>,
 }
 
 impl RateLimiter {

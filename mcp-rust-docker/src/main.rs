@@ -14,9 +14,9 @@ use crate::server::McpServer;
 use crate::transport::stdio::StdioTransport;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> anyhow::Result<()> {
     // Set up command line argument parsing
-    let matches = clap::App::new("Docker MCP Server")
+    let matches = clap::Command::new("Docker MCP Server")
         .version(env!("CARGO_PKG_VERSION"))
         .author("Your Name <your.email@example.com>")
         .about("Model Context Protocol server for Docker operations")
@@ -37,13 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Load configuration
     let config_path = matches.value_of("config").map(std::path::PathBuf::from);
-    let config = match config::loader::load_config(config_path) {
-        Ok(config) => config,
-        Err(e) => {
-            log::error!("Failed to load configuration: {}", e);
-            return Err(Box::new(e));
-        }
-    };
+    let config = crate::config::loader::load_config(config_path)?;
 
     // Log startup information
     log::info!(
@@ -52,17 +46,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Create and initialize server
-    let server = server::McpServer::new(config);
+    let server = crate::server::McpServer::new(config);
     server.initialize().await?;
 
     // Set up transport based on configuration
     match server.get_transport_type() {
-        config::types::TransportType::Stdio => {
+        crate::config::types::TransportType::Stdio => {
             log::info!("Using stdio transport");
-            let mut transport = transport::stdio::StdioTransport::new(server);
+            let mut transport = crate::transport::stdio::StdioTransport::new(server);
             transport.run().await?;
         }
-        config::types::TransportType::Sse => {
+        crate::config::types::TransportType::Sse => {
             log::info!("SSE transport not implemented yet");
             // TODO: Implement SSE transport
         }

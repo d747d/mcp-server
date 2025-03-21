@@ -47,3 +47,5 @@ humantime-serde = "1.1.1"
 base64 = "0.21.5"
 tempfile = "3.8.1"
 clap = "3.2.25"
+
+futures-util = { version = "0.3.29", features = ["io"] }
