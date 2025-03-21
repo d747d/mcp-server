@@ -78,6 +78,10 @@ Add the Docker MCP Server to your configuration:
   }
 }
 ```
+Check mcp server:
+
+npx @modelcontextprotocol/inspector /path/to/your/target/release/docker-mcp-server
+
 ```
 
 Security Considerations
