@@ -5,14 +5,6 @@ mod security;
 mod server;
 mod transport;
 
-use clap::{App, Arg};
-use std::path::PathBuf;
-use log::{info, error};
-
-use crate::config::loader::load_config;
-use crate::server::McpServer;
-use crate::transport::stdio::StdioTransport;
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Set up command line argument parsing

@@ -217,8 +217,8 @@ fn default_max_build_time() -> Duration {
     Duration::from_secs(300) // 5 minutes
 }
 
-fn default_max_log_size() -> usize {
-    1024 * 1024 // 1 MB
+fn default_max_log_size() -> Option<usize> {
+    Some(1024 * 1024) // 1 MB
 }
 
 fn default_log_level() -> String {

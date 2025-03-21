@@ -4,12 +4,12 @@ use bollard::Docker;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::process::Command;
-use std::time::Duration;
 
 use crate::config::types::DockerSettings;
 use crate::protocol::error::McpError;
 use crate::protocol::types::{CallToolResult, Content, TextContent};
 use futures::stream::TryStreamExt;
+
 
 pub trait DockerClient {
     // Container operations
@@ -43,28 +43,16 @@ impl DockerClientImpl {
     pub fn new(settings: &DockerSettings) -> Self {
         let client = match settings.host.as_str() {
             host if host.starts_with("unix://") => {
-                Docker::connect_with_unix(
-                    host.trim_start_matches("unix://"), 
-                    120, 
-                    &bollard::ClientVersion::V1_41
-                )
+                Docker::connect_with_unix_defaults().expect("Failed to connect to Docker daemon")
             }
             host if host.starts_with("npipe://") => {
-                Docker::connect_with_http(
-                    host.trim_start_matches("npipe://"), 
-                    120, 
-                    &bollard::ClientVersion::V1_41
-                )
+                Docker::connect_with_http_defaults().expect("Failed to connect to Docker daemon")
             }
-            host => Docker::connect_with_http(
-                host, 
-                120, 
-                &bollard::ClientVersion::V1_41
-            ),
+            host => Docker::connect_with_http_defaults().expect("Failed to connect to Docker daemon"),
         };
-
+    
         Self {
-            client: client.expect("Failed to connect to Docker daemon"),
+            client,
             settings: settings.clone(),
         }
     }
@@ -98,7 +86,7 @@ impl DockerClient for DockerClientImpl {
 
         let mut options = ListContainersOptions::<String>::default();
         options.all = all;
-        options.limit = limit as i64;
+        options.limit = Some(limit as isize);
         
         if let Some(filter_str) = filter {
             let mut filters = HashMap::new();
@@ -191,18 +179,20 @@ impl DockerClient for DockerClientImpl {
 
         if let Some(since_str) = since {
             // Handle relative time (e.g., "42m" for 42 minutes)
-            if since_str.ends_with('m') {
-                if let Ok(minutes) = since_str.trim_end_matches('m').parse::<i64>() {
-                    let since_timestamp = chrono::Utc::now() - chrono::Duration::minutes(minutes);
-                    options.since = since_timestamp.timestamp();
+            if let Some(since_str) = since {
+                if since_str.ends_with('m') {
+                    if let Ok(minutes) = since_str.trim_end_matches('m').parse::<i64>() {
+                        let since_timestamp = chrono::Utc::now() - chrono::Duration::minutes(minutes);
+                        options.since = since_timestamp.timestamp();
+                    }
+                } else if since_str.ends_with('h') {
+                    if let Ok(hours) = since_str.trim_end_matches('h').parse::<i64>() {
+                        let since_timestamp = chrono::Utc::now() - chrono::Duration::hours(hours);
+                        options.since = since_timestamp.timestamp();
+                    }
+                } else if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(since_str) {
+                    options.since = timestamp.timestamp();
                 }
-            } else if since_str.ends_with('h') {
-                if let Ok(hours) = since_str.trim_end_matches('h').parse::<i64>() {
-                    let since_timestamp = chrono::Utc::now() - chrono::Duration::hours(hours);
-                    options.since = Some(since_timestamp.timestamp());
-                }
-            } else if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(since_str) {
-                options.since = Some(timestamp.timestamp());
             }
         }
 
@@ -249,7 +239,7 @@ impl DockerClient for DockerClientImpl {
         let filter = args.get("filter").and_then(|v| v.as_str());
 
         let mut options = ListImagesOptions::<String>::default();
-        options.all = Some(all);
+        options.all = all;
         
         if let Some(filter_str) = filter {
             let mut filters = HashMap::new();

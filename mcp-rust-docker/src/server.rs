@@ -6,7 +6,7 @@ use crate::config::types::ServerConfig;
 use crate::docker::{DockerClient, DockerClientImpl};
 use crate::protocol::error::McpError;
 use crate::protocol::types::{
-    CallToolRequest, CallToolResult, GetPromptRequest, GetPromptResult, JsonRpcId, JsonRpcRequest,
+    CallToolRequest, GetPromptRequest, GetPromptResult, JsonRpcId, JsonRpcRequest,
     JsonRpcResponse, ListPromptsResult, ListResourcesResult, ListToolsResult, Prompt, ReadResourceRequest,
     ReadResourceResult, Resource, ResourceContent, ServerCapabilities, ServerInfo, Tool,
 };

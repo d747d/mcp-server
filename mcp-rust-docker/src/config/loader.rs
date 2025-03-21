@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use config::{Config, Environment, File};
+use config::{Config, File};
 use std::path::Path;
 
 use crate::config::types::ServerConfig;
@@ -8,10 +8,9 @@ pub fn load_config<P: AsRef<Path>>(path: Option<P>) -> Result<ServerConfig> {
     let mut builder = Config::builder();
 
     // Start with default settings
-    builder = builder.add_source(File::from_str(
-        include_str!("../config/default.yaml"),
-        config::FileFormat::Yaml,
-    ));
+    builder = builder.add_source(File::from(
+        std::path::Path::new("config/default.yaml")
+    ).required(false).format(config::FileFormat::Yaml));
 
     // Add config file if specified
     if let Some(config_path) = path {
