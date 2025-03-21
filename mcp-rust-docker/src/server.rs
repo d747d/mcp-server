@@ -69,6 +69,10 @@ impl McpServer {
             },
         );
 
+        pub fn get_transport_type(&self) -> &config::types::TransportType {
+            &self.config.server.transport
+        }
+
         tools.insert(
             "container-start".to_string(),
             Tool {
