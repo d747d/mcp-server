@@ -68,6 +68,7 @@ Windows: %APPDATA%\Claude\claude_desktop_config.json
 Add the Docker MCP Server to your configuration:
 
 ```
+```
 {
   "mcpServers": {
     "docker": {
@@ -76,6 +77,7 @@ Add the Docker MCP Server to your configuration:
     }
   }
 }
+```
 ```
 
 Security Considerations
