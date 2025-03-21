@@ -48,7 +48,7 @@ impl DockerClientImpl {
             host if host.starts_with("npipe://") => {
                 Docker::connect_with_http_defaults().expect("Failed to connect to Docker daemon")
             }
-            host => Docker::connect_with_http_defaults().expect("Failed to connect to Docker daemon"),
+            _host => Docker::connect_with_http_defaults().expect("Failed to connect to Docker daemon"),
         };
     
         Self {
@@ -196,7 +196,7 @@ impl DockerClient for DockerClientImpl {
             }
         }
 
-        let max_log_size = self.settings.max_log_size.unwrap_or(1048576);
+        let max_log_size = self.settings.max_log_size;
         let logs = self.client.logs(container_id, Some(options)).try_collect::<Vec<_>>().await?;
         
         let mut log_text = String::new();
