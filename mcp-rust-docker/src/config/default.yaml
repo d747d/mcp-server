@@ -1,0 +1,60 @@
+server:
+  name: "docker-mcp-server"
+  version: "0.1.0"
+  transport: "stdio"
+  request_timeout: "30s"
+
+docker:
+  host: "unix:///var/run/docker.sock"
+  read_only: false
+  operation_timeout: "60s"
+
+security:
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 60
+    burst: 10
+  
+  quotas:
+    enabled: true
+    max_containers: 20
+    max_images: 50
+    max_build_time: "300s"
+    max_log_size: 1048576  # 1 MB
+  
+  registries:
+    allowed_registries:
+      - "docker.io"
+      - "mcr.microsoft.com"
+      - "gcr.io"
+      - "quay.io"
+      - "ghcr.io"
+    denied_registries: []
+    denied_base_images:
+      - "alpine:edge"
+  
+  volumes:
+    denied_mounts:
+      - "/etc"
+      - "/var"
+      - "/usr"
+      - "/root"
+      - "/home"
+  
+  networks:
+    denied_networks:
+      - "host"
+  
+  commands:
+    denied_commands:
+      - "exec"
+      - "plugin"
+      - "swarm"
+      - "system"
+      - "trust"
+
+logging:
+  level: "info"
+  format: "text"
+  log_requests: true
+  audit_logging: true

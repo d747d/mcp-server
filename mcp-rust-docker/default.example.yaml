@@ -1,0 +1,61 @@
+server:
+  name: "docker-mcp-server"
+  version: "0.1.0"
+  transport: "stdio"  # stdio or sse
+  request_timeout: "30s"
+
+docker:
+  host: "unix:///var/run/docker.sock"  # Docker socket path
+  read_only: false  # Set to true for read-only mode
+  allowed_compose_projects:  # If empty, all projects are allowed
+    - "/home/user/projects/webapp"
+    - "/home/user/projects/database"
+  operation_timeout: "60s"
+
+security:
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 60
+    burst: 10
+  
+  quotas:
+    enabled: true
+    max_containers: 20
+    max_images: 50
+    max_build_time: "300s"
+    max_log_size: 1048576  # 1 MB
+  
+  registries:
+    allowed_registries:  # If empty, all are allowed
+      - "docker.io"
+      - "mcr.microsoft.com"
+      - "gcr.io"
+      - "quay.io"
+      - "ghcr.io"
+    denied_registries:
+      - "badregistry.example.com"
+    denied_base_images:
+      - "alpine:edge"
+  
+  volumes:
+    denied_mounts:
+      - "/etc"
+      - "/var"
+      - "/usr"
+  
+  networks:
+    denied_networks:
+      - "host"
+  
+  commands:
+    denied_commands:
+      - "exec"
+      - "plugin"
+      - "swarm"
+      - "system"
+
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "text"  # text or json
+  log_requests: true
+  audit_logging: true
