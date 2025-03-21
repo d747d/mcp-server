@@ -64,10 +64,10 @@ Edit your Claude for Desktop configuration at:
 macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
 Windows: %APPDATA%\Claude\claude_desktop_config.json
 
-
+```
 Add the Docker MCP Server to your configuration:
 
-```
+
 ```
 {
   "mcpServers": {
