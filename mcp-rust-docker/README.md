@@ -67,7 +67,16 @@ Windows: %APPDATA%\Claude\claude_desktop_config.json
 
 Add the Docker MCP Server to your configuration:
 
-json
+```
+{
+  "mcpServers": {
+    "docker": {
+      "command": "/absolute/path/to/your/target/release/docker-mcp-server",
+      "args": ["--config", "/absolute/path/to/your/config.yaml"]
+    }
+  }
+}
+```
 
 Security Considerations
 
