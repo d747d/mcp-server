@@ -4,6 +4,7 @@ mod protocol;
 mod security;
 mod server;
 mod transport;
+mod logging;  // Add the logging module
 
 use log::{info, error, warn, debug, trace};
 
@@ -66,15 +67,14 @@ async fn main() -> anyhow::Result<()> {
         " from default locations".to_string()
     });
     
-    let config = match crate::config::loader::load_config(config_path) {
-        Ok(config) => config,
-        Err(e) => {
-            error!("Failed to load configuration: {}", e);
-            error!("Make sure a valid configuration file exists");
-            error!("You can specify a custom path with --config");
-            return Err(e);
-        }
-    };
+    let config = crate::config::loader::load_config(config_path)?;
+
+    // Initialize the error logger
+    let log_file = config.logging.file.as_ref().map(std::path::Path::new);
+    if let Err(e) = logging::ErrorLogger::init(log_file, true, config.logging.log_requests) {
+        error!("Failed to initialize error logger: {}", e);
+        // Continue anyway, as this isn't critical
+    }
 
     // Log startup information
     info!(
