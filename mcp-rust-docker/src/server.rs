@@ -11,6 +11,7 @@ use crate::protocol::types::{
     ReadResourceResult, Resource, ResourceContent, ServerCapabilities, ServerInfo, Tool,
 };
 use crate::security::{RateLimiter, SecurityValidator};
+use crate::logging::ErrorLogger;
 
 pub struct McpServer {
     config: ServerConfig,
@@ -38,13 +39,91 @@ impl McpServer {
             rate_limiter,
         }
     }
+    // Add this method to improve error logging
+    fn log_request(&self, request: &JsonRpcRequest, response: &JsonRpcResponse) {
+        let id = match &request.id {
+            JsonRpcId::Null => "null".to_string(),
+            JsonRpcId::String(s) => s.clone(),
+            JsonRpcId::Number(n) => n.to_string(),
+        };
+        
+        let success = response.error.is_none();
+        let error_code = response.error.as_ref().map(|e| e.code);
+        let error_message = response.error.as_ref().map(|e| e.message.as_str());
+        
+        ErrorLogger::log_request_end(&id, &request.method, success, error_code, error_message);
+    }
+    
+    // Modify your existing process_request method to add logging
+    pub async fn process_request(&self, request: JsonRpcRequest) -> JsonRpcResponse {
+        // Log request start
+        let id_str = match &request.id {
+            JsonRpcId::Null => "null".to_string(),
+            JsonRpcId::String(s) => s.clone(),
+            JsonRpcId::Number(n) => n.to_string(),
+        };
+        
+        ErrorLogger::log_request_start(&id_str, &request.method);
+        
+        // Apply rate limiting
+        if let Err(e) = self.rate_limiter.check() {
+            let response = self.error_response(request.id, e);
+            self.log_request(&request, &response);
+            return response;
+        }
+
+        // Your existing match block for request.method.as_str()...
+        let response = match request.method.as_str() {
+            // Your existing handlers...
+            _ => self.error_response(
+                request.id,
+                McpError::MethodNotFound(format!("Method '{}' not found", request.method)),
+            ),
+        };
+        
+        // Log request completion
+        self.log_request(&request, &response);
+        
+        response
+    }
 
     pub fn get_transport_type(&self) -> &crate::config::types::TransportType {
         &self.config.server.transport
     }
+        // Add getter for request timeout
+    pub fn get_request_timeout(&self) -> std::time::Duration {
+        self.config.server.request_timeout
+    }
+    
+    // Add a diagnostic tool to help with debugging
+    async fn register_diagnostic_tool(&self, tools: &mut std::collections::HashMap<String, crate::protocol::types::Tool>) {
+        tools.insert(
+            "diagnostic".to_string(),
+            crate::protocol::types::Tool {
+                name: "diagnostic".to_string(),
+                description: Some("Run diagnostic checks on the Docker MCP server".to_string()),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "check_docker": {
+                            "type": "boolean",
+                            "description": "Check Docker connectivity"
+                        },
+                        "check_compose": {
+                            "type": "boolean",
+                            "description": "Check Docker Compose availability"
+                        },
+                        "list_env_vars": {
+                            "type": "boolean",
+                            "description": "List relevant environment variables"
+                        }
+                    }
+                }),
+            },
+        );
+    }
 
-    pub async fn initialize(&self) -> Result<(), McpError> {
-        // Register tools
+    pub async fn initialize(&self) -> Result<(), crate::protocol::error::McpError> {
         let mut tools = self.tools.write().await;
         
         // Container tools
@@ -316,6 +395,9 @@ impl McpServer {
             },
         );
 
+        // Register the diagnostic tool
+        self.register_diagnostic_tool(&mut tools).await;
+
         Ok(())
     }
 
@@ -415,8 +497,7 @@ impl McpServer {
         }
     }
 
-    async fn handle_call_tool(&self, id: JsonRpcId, request: CallToolRequest) -> JsonRpcResponse {
-        // Check security restrictions
+    async fn handle_call_tool(&self, id: crate::protocol::types::JsonRpcId, request: crate::protocol::types::CallToolRequest) -> crate::protocol::types::JsonRpcResponse {        // Check security restrictions
         if let Err(e) = self.security_validator.validate_tool(&request) {
             return self.error_response(id, e);
         }
@@ -439,7 +520,8 @@ impl McpServer {
             "compose-up" => self.docker_client.compose_up(request.arguments).await,
             "compose-down" => self.docker_client.compose_down(request.arguments).await,
             "validate-compose" => self.docker_client.validate_compose(request.arguments).await,
-            _ => Err(McpError::ToolNotFound(tool_name)),
+            "diagnostic" => self.run_diagnostic(request.arguments).await,
+            _ => Err(crate::protocol::error::McpError::ToolNotFound(request.name)),
         };
 
         match result {
@@ -760,6 +842,133 @@ impl McpServer {
                 scenario, services
             )),
             messages,
+        })
+    }
+
+    // Implementation of the diagnostic tool
+    async fn run_diagnostic(&self, args: serde_json::Value) -> Result<crate::protocol::types::CallToolResult, crate::protocol::error::McpError> {
+        let check_docker = args.get("check_docker").and_then(|v| v.as_bool()).unwrap_or(true);
+        let check_compose = args.get("check_compose").and_then(|v| v.as_bool()).unwrap_or(true);
+        let list_env_vars = args.get("list_env_vars").and_then(|v| v.as_bool()).unwrap_or(false);
+        
+        let mut results = Vec::new();
+        
+        results.push("=== Docker MCP Server Diagnostics ===".to_string());
+        results.push(format!("Server name: {}", self.config.server.name));
+        results.push(format!("Server version: {}", self.config.server.version));
+        results.push(format!("Transport type: {:?}", self.config.server.transport));
+        results.push(format!("Request timeout: {:?}", self.config.server.request_timeout));
+        results.push(format!("Docker host: {}", self.config.docker.host));
+        results.push(format!("Read-only mode: {}", self.config.docker.read_only));
+        
+        if check_docker {
+            results.push("\n=== Docker Connectivity ===".to_string());
+            match self.docker_client.get_docker_version().await {
+                Ok(version) => {
+                    let parsed: Result<serde_json::Value, _> = serde_json::from_str(&version);
+                    match parsed {
+                        Ok(v) => {
+                            if let Some(api_version) = v.get("ApiVersion").and_then(|v| v.as_str()) {
+                                results.push(format!("Docker API version: {}", api_version));
+                            }
+                            if let Some(engine_version) = v.get("Version").and_then(|v| v.as_str()) {
+                                results.push(format!("Docker Engine version: {}", engine_version));
+                            }
+                            results.push("Docker connection: OK".to_string());
+                        },
+                        Err(_) => {
+                            results.push(format!("Docker connection: OK (raw data: {})", version));
+                        }
+                    }
+                },
+                Err(e) => {
+                    results.push(format!("Docker connection: FAILED - {}", e));
+                    results.push("Possible causes:".to_string());
+                    results.push(" - Docker daemon not running".to_string());
+                    results.push(" - Incorrect Docker host configuration".to_string());
+                    results.push(" - Permission issues with Docker socket".to_string());
+                    
+                    if self.config.docker.host.starts_with("unix://") {
+                        // Check if the Docker socket exists
+                        let socket_path = self.config.docker.host.trim_start_matches("unix://");
+                        if let Ok(metadata) = std::fs::metadata(socket_path) {
+                            results.push(format!("Docker socket exists: {}", socket_path));
+                            
+                            // Check if it's a socket
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::FileTypeExt;
+                                if metadata.file_type().is_socket() {
+                                    results.push("File is a valid socket: YES".to_string());
+                                } else {
+                                    results.push("File is a valid socket: NO".to_string());
+                                }
+                            }
+                        } else {
+                            results.push(format!("Docker socket not found at: {}", socket_path));
+                        }
+                    }
+                }
+            }
+        }
+        
+        if check_compose {
+            results.push("\n=== Docker Compose ===".to_string());
+            
+            let compose_path = &self.config.docker.compose_path;
+            results.push(format!("Docker Compose path: {:?}", compose_path));
+            
+            // Check if the compose binary exists
+            if compose_path.exists() {
+                results.push("Docker Compose binary exists: YES".to_string());
+                
+                // Try to run docker-compose version
+                let output = tokio::process::Command::new(compose_path)
+                    .arg("version")
+                    .output()
+                    .await;
+                
+                match output {
+                    Ok(output) => {
+                        if output.status.success() {
+                            let version = String::from_utf8_lossy(&output.stdout);
+                            results.push(format!("Docker Compose version: {}", version.trim()));
+                            results.push("Docker Compose command: OK".to_string());
+                        } else {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            results.push(format!("Docker Compose command failed: {}", stderr.trim()));
+                        }
+                    },
+                    Err(e) => {
+                        results.push(format!("Docker Compose command error: {}", e));
+                    }
+                }
+            } else {
+                results.push("Docker Compose binary exists: NO".to_string());
+                results.push("Possible causes:".to_string());
+                results.push(" - Docker Compose not installed".to_string());
+                results.push(" - Incorrect path in configuration".to_string());
+                results.push(format!(" - Current working directory: {:?}", std::env::current_dir().ok()));
+            }
+        }
+        
+        if list_env_vars {
+            results.push("\n=== Environment Variables ===".to_string());
+            for (key, value) in std::env::vars() {
+                if key.starts_with("DOCKER_") || key.contains("MCP") || key.contains("RUST") {
+                    results.push(format!("{}={}", key, value));
+                }
+            }
+        }
+        
+        let result_text = results.join("\n");
+        
+        Ok(crate::protocol::types::CallToolResult {
+            content: vec![crate::protocol::types::Content::Text(crate::protocol::types::TextContent {
+                r#type: "text".to_string(),
+                text: result_text,
+            })],
+            is_error: false,
         })
     }
 
