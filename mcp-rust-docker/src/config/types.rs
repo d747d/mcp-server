@@ -34,6 +34,70 @@ impl Default for TransportType {
     }
 }
 
+impl Default for DockerSettings {
+    fn default() -> Self {
+        Self {
+            host: default_docker_host(),
+            api_version: None,
+            allowed_compose_projects: None,
+            compose_path: default_compose_path(),
+            operation_timeout: default_operation_timeout(),
+            read_only: false,
+            max_log_size: default_max_log_size(),
+        }
+    }
+}
+
+impl Default for SecuritySettings {
+    fn default() -> Self {
+        Self {
+            rate_limiting: RateLimitSettings {
+                enabled: default_true(),
+                requests_per_minute: default_rate_limit(),
+                burst: default_burst_limit(),
+            },
+            quotas: QuotaSettings {
+                enabled: default_true(),
+                max_containers: default_max_containers(),
+                max_images: default_max_images(),
+                max_build_time: default_max_build_time(),
+                max_log_size: default_max_log_size(),
+            },
+            registries: RegistrySettings {
+                allowed_registries: None,
+                denied_registries: std::collections::HashSet::new(),
+                allowed_base_images: None,
+                denied_base_images: std::collections::HashSet::new(),
+            },
+            volumes: VolumeSettings {
+                allowed_mounts: None,
+                denied_mounts: std::collections::HashSet::new(),
+            },
+            networks: NetworkSettings {
+                allowed_networks: None,
+                denied_networks: std::collections::HashSet::new(),
+            },
+            commands: CommandSettings {
+                allowed_commands: None,
+                denied_commands: std::collections::HashSet::new(),
+            },
+        }
+    }
+}
+
+impl Default for LoggingSettings {
+    fn default() -> Self {
+        Self {
+            level: default_log_level(),
+            format: default_log_format(),
+            file: None,
+            log_requests: default_true(),
+            audit_logging: default_true(),
+            audit_file: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DockerSettings {
     /// Docker socket path or TCP endpoint
