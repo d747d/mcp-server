@@ -13,6 +13,7 @@ struct McpClient {
     stdout_reader: BufReader<std::process::ChildStdout>,
 }
 
+#[allow(dead_code)]
 impl McpClient {
     fn new(server_path: &str, config_path: Option<&str>) -> Result<Self, String> {
         let mut cmd = Command::new(server_path);

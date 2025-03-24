@@ -1,7 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use config::{Config, File, Environment};
 use std::path::Path;
-use log::{info, warn, error};
+use log::{info, error};
 
 use crate::config::types::ServerConfig;
 
@@ -9,14 +9,14 @@ pub fn load_config<P: AsRef<Path>>(path: Option<P>) -> Result<ServerConfig> {
     info!("Loading configuration");
 
     let mut builder = Config::builder();
-    let mut config_sources = Vec::new();
+    let mut config_sources = Vec::<String>::new();
 
     // Start with embedded default settings to ensure we always have a baseline config
     builder = builder.add_source(File::from_str(
         include_str!("../config/default.yaml"),
         config::FileFormat::Yaml,
     ));
-    config_sources.push("embedded default config");
+    config_sources.push("embedded default config".to_string());
 
     // Try to load from default config file locations
     let default_locations = vec![
@@ -32,7 +32,7 @@ pub fn load_config<P: AsRef<Path>>(path: Option<P>) -> Result<ServerConfig> {
             builder = builder.add_source(
                 File::from(path).required(false).format(config::FileFormat::Yaml)
             );
-            config_sources.push(location);
+            config_sources.push(location.to_string());
         }
     }
 
@@ -46,7 +46,7 @@ pub fn load_config<P: AsRef<Path>>(path: Option<P>) -> Result<ServerConfig> {
                     .required(true)
                     .format(config::FileFormat::Yaml),
             );
-            config_sources.push(config_path.to_string_lossy().to_string().as_str());
+            config_sources.push(config_path.to_string_lossy().to_string());
         } else {
             let err_msg = format!("Specified config file not found: {:?}", config_path);
             error!("{}", err_msg);
@@ -60,7 +60,7 @@ pub fn load_config<P: AsRef<Path>>(path: Option<P>) -> Result<ServerConfig> {
             .separator("_")
             .try_parsing(true)
     );
-    config_sources.push("environment variables (DOCKER_MCP_*)");
+    config_sources.push("environment variables (DOCKER_MCP_*)".to_string());
 
     info!("Configuration sources (in priority order): {:?}", config_sources);
     

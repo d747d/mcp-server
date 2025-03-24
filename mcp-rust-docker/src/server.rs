@@ -24,20 +24,20 @@ pub struct McpServer {
 }
 
 impl McpServer {
-    pub fn new(config: ServerConfig) -> Self {
-        let docker_client = Arc::new(DockerClientImpl::new(&config.docker));
-        let security_validator = Arc::new(SecurityValidator::new(&config.security));
-        let rate_limiter = Arc::new(RateLimiter::new(&config.security.rate_limiting));
-
-        Self {
-            config,
-            docker_client,
+    pub fn new(config: &ServerConfig) -> Result<Self, McpError> {
+        let docker_client = DockerClientImpl::new(&config.docker)?;
+        let security_validator = SecurityValidator::new(&config.security);
+        let rate_limiter = RateLimiter::new(&config.security.rate_limiting);
+    
+        Ok(Self {
+            config: config.clone(),
+            docker_client: Arc::new(docker_client),
             tools: Arc::new(RwLock::new(HashMap::new())),
             resources: Arc::new(RwLock::new(HashMap::new())),
             prompts: Arc::new(RwLock::new(HashMap::new())),
-            security_validator,
-            rate_limiter,
-        }
+            security_validator: Arc::new(security_validator),
+            rate_limiter: Arc::new(rate_limiter),
+        })
     }
     // Add this method to improve error logging
     fn log_request(&self, request: &JsonRpcRequest, response: &JsonRpcResponse) {
@@ -67,18 +67,20 @@ impl McpServer {
         
         // Apply rate limiting
         if let Err(e) = self.rate_limiter.check() {
-            let response = self.error_response(request.id, e);
+            let id_clone = request.id.clone();
+            let response = self.error_response(id_clone, e);
             self.log_request(&request, &response);
             return response;
         }
 
         // Your existing match block for request.method.as_str()...
+        let id_clone = request.id.clone();
         let response = match request.method.as_str() {
-            // Your existing handlers...
-            _ => self.error_response(
-                request.id,
-                McpError::MethodNotFound(format!("Method '{}' not found", request.method)),
-            ),
+        // ... existing code
+        _ => self.error_response(
+            id_clone,
+            McpError::MethodNotFound(format!("Method '{}' not found", request.method)),
+        ),
         };
         
         // Log request completion
@@ -399,57 +401,6 @@ impl McpServer {
         self.register_diagnostic_tool(&mut tools).await;
 
         Ok(())
-    }
-
-    pub async fn process_request(&self, request: JsonRpcRequest) -> JsonRpcResponse {
-        // Apply rate limiting
-        if let Err(e) = self.rate_limiter.check() {
-            return self.error_response(request.id, e);
-        }
-
-        match request.method.as_str() {
-            "initialize" => self.handle_initialize(request.id).await,
-            "tools/list" => self.handle_list_tools(request.id).await,
-            "tools/call" => {
-                let params = match request.params {
-                    Some(params) => params,
-                    None => return self.error_response(request.id, McpError::InvalidParams("Missing params".to_string())),
-                };
-
-                match serde_json::from_value::<CallToolRequest>(params) {
-                    Ok(params) => self.handle_call_tool(request.id, params).await,
-                    Err(e) => self.error_response(request.id, McpError::InvalidParams(e.to_string())),
-                }
-            }
-            "resources/list" => self.handle_list_resources(request.id).await,
-            "resources/read" => {
-                let params = match request.params {
-                    Some(params) => params,
-                    None => return self.error_response(request.id, McpError::InvalidParams("Missing params".to_string())),
-                };
-
-                match serde_json::from_value::<ReadResourceRequest>(params) {
-                    Ok(params) => self.handle_read_resource(request.id, params).await,
-                    Err(e) => self.error_response(request.id, McpError::InvalidParams(e.to_string())),
-                }
-            }
-            "prompts/list" => self.handle_list_prompts(request.id).await,
-            "prompts/get" => {
-                let params = match request.params {
-                    Some(params) => params,
-                    None => return self.error_response(request.id, McpError::InvalidParams("Missing params".to_string())),
-                };
-
-                match serde_json::from_value::<GetPromptRequest>(params) {
-                    Ok(params) => self.handle_get_prompt(request.id, params).await,
-                    Err(e) => self.error_response(request.id, McpError::InvalidParams(e.to_string())),
-                }
-            }
-            _ => self.error_response(
-                request.id,
-                McpError::MethodNotFound(format!("Method '{}' not found", request.method)),
-            ),
-        }
     }
 
     async fn handle_initialize(&self, id: JsonRpcId) -> JsonRpcResponse {
