@@ -40,21 +40,43 @@ pub struct DockerClientImpl {
 }
 
 impl DockerClientImpl {
-    pub fn new(settings: &DockerSettings) -> Self {
+    // Add getter for compose path
+    pub fn get_compose_path(&self) -> &std::path::Path {
+        &self.settings.compose_path
+    }
+    // Enhance the Docker client connection handling
+    pub fn new(settings: &DockerSettings) -> Result<Self, McpError> {
         let client = match settings.host.as_str() {
             host if host.starts_with("unix://") => {
-                Docker::connect_with_unix_defaults().expect("Failed to connect to Docker daemon")
+                match Docker::connect_with_unix_defaults() {
+                    Ok(client) => client,
+                    Err(e) => return Err(McpError::DockerError(format!(
+                        "Failed to connect to Docker daemon at {}: {}", host, e
+                    ))),
+                }
             }
             host if host.starts_with("npipe://") => {
-                Docker::connect_with_http_defaults().expect("Failed to connect to Docker daemon")
+                match Docker::connect_with_local_defaults() {
+                    Ok(client) => client,
+                    Err(e) => return Err(McpError::DockerError(format!(
+                        "Failed to connect to Docker daemon at {}: {}", host, e
+                    ))),
+                }
             }
-            _host => Docker::connect_with_http_defaults().expect("Failed to connect to Docker daemon"),
+            host => {
+                match Docker::connect_with_http_defaults() {
+                    Ok(client) => client,
+                    Err(e) => return Err(McpError::DockerError(format!(
+                        "Failed to connect to Docker daemon at {}: {}", host, e
+                    ))),
+                }
+            },
         };
     
-        Self {
+        Ok(Self {
             client,
             settings: settings.clone(),
-        }
+        })
     }
 
     fn is_read_only_operation(&self, operation: &str) -> bool {
@@ -76,6 +98,7 @@ impl DockerClientImpl {
     }
 }
 
+// Improve Docker operation with timeouts
 impl DockerClient for DockerClientImpl {
     async fn list_containers(&self, args: Value) -> Result<CallToolResult, McpError> {
         self.check_read_only("list_containers")?;
@@ -86,7 +109,9 @@ impl DockerClient for DockerClientImpl {
 
         let mut options = ListContainersOptions::<String>::default();
         options.all = all;
-        options.limit = Some(limit as isize);
+        if limit > 0 {
+            options.limit = Some(limit as isize);
+        }
         
         if let Some(filter_str) = filter {
             let mut filters = HashMap::new();
@@ -98,17 +123,29 @@ impl DockerClient for DockerClientImpl {
             }
         }
 
-        let containers = self.client.list_containers(Some(options)).await?;
-        
-        let json_result = serde_json::to_string_pretty(&containers)?;
-        
-        Ok(CallToolResult {
-            content: vec![Content::Text(TextContent {
-                r#type: "text".to_string(),
-                text: json_result,
-            })],
-            is_error: false,
-        })
+        // Add timeout to Docker API call
+        match tokio::time::timeout(
+            self.settings.operation_timeout,
+            self.client.list_containers(Some(options))
+        ).await {
+            Ok(result) => {
+                match result {
+                    Ok(containers) => {
+                        let json_result = serde_json::to_string_pretty(&containers)?;
+                        
+                        Ok(CallToolResult {
+                            content: vec![Content::Text(TextContent {
+                                r#type: "text".to_string(),
+                                text: json_result,
+                            })],
+                            is_error: false,
+                        })
+                    },
+                    Err(e) => Err(McpError::DockerError(format!("Failed to list containers: {}", e))),
+                }
+            },
+            Err(_) => Err(McpError::OperationTimeout),
+        }
     }
 
     async fn container_start(&self, args: Value) -> Result<CallToolResult, McpError> {
@@ -179,57 +216,68 @@ impl DockerClient for DockerClientImpl {
 
         if let Some(since_str) = since {
             // Handle relative time (e.g., "42m" for 42 minutes)
-            if let Some(since_str) = since {
-                if since_str.ends_with('m') {
-                    if let Ok(minutes) = since_str.trim_end_matches('m').parse::<i64>() {
-                        let since_timestamp = chrono::Utc::now() - chrono::Duration::minutes(minutes);
-                        options.since = since_timestamp.timestamp();
-                    }
-                } else if since_str.ends_with('h') {
-                    if let Ok(hours) = since_str.trim_end_matches('h').parse::<i64>() {
-                        let since_timestamp = chrono::Utc::now() - chrono::Duration::hours(hours);
-                        options.since = since_timestamp.timestamp();
-                    }
-                } else if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(since_str) {
-                    options.since = timestamp.timestamp();
+            if since_str.ends_with('m') {
+                if let Ok(minutes) = since_str.trim_end_matches('m').parse::<i64>() {
+                    let since_timestamp = chrono::Utc::now() - chrono::Duration::minutes(minutes);
+                    options.since = since_timestamp.timestamp();
                 }
+            } else if since_str.ends_with('h') {
+                if let Ok(hours) = since_str.trim_end_matches('h').parse::<i64>() {
+                    let since_timestamp = chrono::Utc::now() - chrono::Duration::hours(hours);
+                    options.since = since_timestamp.timestamp();
+                }
+            } else if let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(since_str) {
+                options.since = timestamp.timestamp();
             }
         }
 
         let max_log_size = self.settings.max_log_size;
-        let logs = self.client.logs(container_id, Some(options)).try_collect::<Vec<_>>().await?;
         
-        let mut log_text = String::new();
-        for log in logs {
-            match log {
-                bollard::container::LogOutput::StdOut { message } => {
-                    if let Ok(text) = String::from_utf8(message.to_vec()) {
-                        log_text.push_str(&format!("[STDOUT] {}\n", text));
-                    }
-                }
-                bollard::container::LogOutput::StdErr { message } => {
-                    if let Ok(text) = String::from_utf8(message.to_vec()) {
-                        log_text.push_str(&format!("[STDERR] {}\n", text));
-                    }
-                }
-                _ => {}
-            }
-            
-            // Check if we've exceeded the maximum log size
-            if log_text.len() > max_log_size {
-                log_text.truncate(max_log_size);
-                log_text.push_str("\n... (log truncated due to size limit)");
-                break;
-            }
-        }
+        // Use timeout for logs collection
+        match tokio::time::timeout(
+            self.settings.operation_timeout,
+            self.client.logs(container_id, Some(options)).try_collect::<Vec<_>>()
+        ).await {
+            Ok(result) => {
+                match result {
+                    Ok(logs) => {
+                        let mut log_text = String::new();
+                        for log in logs {
+                            match log {
+                                bollard::container::LogOutput::StdOut { message } => {
+                                    if let Ok(text) = String::from_utf8(message.to_vec()) {
+                                        log_text.push_str(&format!("[STDOUT] {}\n", text));
+                                    }
+                                }
+                                bollard::container::LogOutput::StdErr { message } => {
+                                    if let Ok(text) = String::from_utf8(message.to_vec()) {
+                                        log_text.push_str(&format!("[STDERR] {}\n", text));
+                                    }
+                                }
+                                _ => {}
+                            }
+                            
+                            // Check if we've exceeded the maximum log size
+                            if log_text.len() > max_log_size {
+                                log_text.truncate(max_log_size);
+                                log_text.push_str("\n... (log truncated due to size limit)");
+                                break;
+                            }
+                        }
 
-        Ok(CallToolResult {
-            content: vec![Content::Text(TextContent {
-                r#type: "text".to_string(),
-                text: log_text,
-            })],
-            is_error: false,
-        })
+                        Ok(CallToolResult {
+                            content: vec![Content::Text(TextContent {
+                                r#type: "text".to_string(),
+                                text: log_text,
+                            })],
+                            is_error: false,
+                        })
+                    },
+                    Err(e) => Err(McpError::DockerError(format!("Failed to get container logs: {}", e))),
+                }
+            },
+            Err(_) => Err(McpError::OperationTimeout),
+        }
     }
 
     async fn list_images(&self, args: Value) -> Result<CallToolResult, McpError> {
