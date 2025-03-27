@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from anthropic_mcp import ingestion, processing, indexing, claude, utils
+from anthropic_mcp.chat_commands import CommandHandler
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +59,16 @@ class ContextResponse(BaseModel):
     context: str
     source_documents: List[str]
     token_count: int
+
+# Initialize the command handler
+command_handler = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Setup on server startup"""
+    global command_handler
+    command_handler = CommandHandler(documents, embeddings, process_document_for_embedding)
+    logger.info("Command handler initialized")
 
 @app.get("/")
 async def root():
@@ -251,7 +262,7 @@ async def get_context(request: ContextRequest):
 
 @app.post("/mcp/v1/context")
 async def mcp_v1_context(request: Request):
-    """MCP v1 context endpoint that follows Anthropic's MCP specification"""
+    """MCP v1 context endpoint that follows Anthropic Model Context Protocol specification"""
     try:
         # Parse the request body
         request_data = await request.json()
@@ -262,7 +273,20 @@ async def mcp_v1_context(request: Request):
             # Try to extract from messages if query is not directly provided
             messages = request_data.get("messages", [])
             if messages and messages[-1].get("role") == "user":
-                query = messages[-1].get("content", "")
+                content = messages[-1].get("content", "")
+                
+                # Check if this is a command
+                if content.startswith("/mcp "):
+                    # This is a command, handle it
+                    command_response = await command_handler.handle_command(content)
+                    if command_response:
+                        # Return the command response as context
+                        return JSONResponse(content={
+                            "context": command_response,
+                            "relevant_documents": []
+                        })
+                
+                query = content
         
         if not query:
             raise HTTPException(status_code=400, detail="No query found in request")

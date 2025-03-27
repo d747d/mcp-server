@@ -7,6 +7,7 @@ An open-source implementation of the Anthropic Model Context Protocol that allow
 This project provides a lightweight server that implements the Anthropic Model Context Protocol (MCP) specification. It enables Claude to access and reference documentation from various sources including PDFs, websites, and text files during conversations.
 
 Key features:
+- Control directly from Claude chat with simple commands
 - PDF document ingestion and processing
 - Web page scraping and content extraction
 - Text chunking and embedding for semantic search
@@ -56,47 +57,34 @@ Available options:
 - `--log-level`: Logging level (choices: debug, info, warning, error, critical; default: info)
 - `--data-dir`: Directory to store documents and embeddings (default: ~/.anthropic_mcp)
 
-### Adding Documents
+## Connecting to Claude Desktop
 
-#### PDF Documents
+1. Start the MCP server
+2. Open Claude Desktop
+3. Go to Settings → Advanced → Model Context Protocol
+4. Add a new MCP server with URL: `http://localhost:8000/mcp/v1/context` (no authentication needed)
+5. Start a new conversation with Claude and enable the MCP server
 
-Upload a PDF document:
-```bash
-curl -X POST -F "file=@path/to/your/document.pdf" http://localhost:8000/documents/pdf
+## Controlling via Claude Chat
+
+You can manage your documentation directly in the Claude chat interface using commands:
+
+| Command | Description |
+|---------|-------------|
+| `/mcp help` | Show available commands |
+| `/mcp add url https://example.com` | Add a webpage as documentation |
+| `/mcp list docs` | List all documents |
+| `/mcp doc info [doc_id]` | Get document details |
+| `/mcp delete doc [doc_id]` | Delete a document |
+| `/mcp status` | Show server status |
+
+### Examples:
+
 ```
-
-#### Web Pages
-
-Add a web page:
-```bash
-curl -X POST "http://localhost:8000/documents/web?url=https://docs.anthropic.com/"
+/mcp add url https://docs.python.org/3/tutorial/
+/mcp list docs
+/mcp doc info web_docs.python.org_3_tutorial_
 ```
-
-#### Text Documents
-
-Add a text document:
-```bash
-curl -X POST -H "Content-Type: application/json" -d '{
-    "source": "my-document",
-    "title": "My Document",
-    "content": "This is the content of my document.",
-    "metadata": {"author": "Your Name"}
-}' http://localhost:8000/documents/text
-```
-
-### Retrieving Context
-
-Get context for a query:
-```bash
-curl -X POST -H "Content-Type: application/json" -d '{
-    "query": "How does the Model Context Protocol work?",
-    "max_tokens": 2000
-}' http://localhost:8000/context
-```
-
-### Using with Claude
-
-The server provides an MCP-compliant endpoint at `/mcp/v1/context` that Claude can use to retrieve relevant context during conversations.
 
 ## API Endpoints
 
