@@ -60,9 +60,9 @@ url_cache: Dict[str, Dict[str, Any]] = {
 
 print(f"Initialized with README resource: {README_PATH}", file=sys.stderr)
 
-# Helper to sanitize and validate URLs
+# Enhanced to be more robust with better validation
 def validate_url(url: str) -> bool:
-    """Validate if a URL is safe and supported."""
+    """Validate if a URL is safe and supported with enhanced validation."""
     try:
         parsed = urlparse(url)
         
@@ -71,8 +71,14 @@ def validate_url(url: str) -> bool:
             return False
         
         # Basic hostname validation
-        if not parsed.netloc or parsed.netloc.startswith("localhost") or parsed.netloc.startswith("127.0.0.1"):
+        if not parsed.netloc or parsed.netloc.startswith("localhost") or any(ip in parsed.netloc for ip in ["127.0.0.1", "0.0.0.0", "::1"]):
             return False
+        
+        # Check for valid domain format
+        if not re.match(r'^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$', parsed.netloc):
+            # Allow IP addresses that aren't localhost/internal
+            if not re.match(r'^(\d{1,3}\.){3}\d{1,3}$', parsed.netloc):
+                return False
         
         return True
     except Exception:
@@ -99,9 +105,9 @@ def get_safe_filename(url: str) -> str:
     base, ext = os.path.splitext(filename)
     return f"{base}_{url_hash[:8]}{ext}"
 
-# Detect content type more accurately
+# Improved content type detection
 def detect_content_type(url: str, headers_content_type: str) -> str:
-    """Detect content type from URL and headers."""
+    """Detect content type from URL and headers with more reliable fallbacks."""
     # First use the content-type from headers
     if headers_content_type:
         main_type = headers_content_type.split(';')[0].strip().lower()
@@ -113,11 +119,31 @@ def detect_content_type(url: str, headers_content_type: str) -> str:
     if content_type:
         return content_type
     
+    # If we still don't have a content type, try to determine from the URL path
+    parsed = urlparse(url)
+    path = parsed.path.lower()
+    
+    if path.endswith('.html') or path.endswith('.htm'):
+        return "text/html"
+    elif path.endswith('.json'):
+        return "application/json"
+    elif path.endswith('.xml'):
+        return "application/xml"
+    elif path.endswith('.txt'):
+        return "text/plain"
+    elif path.endswith('.md'):
+        return "text/markdown"
+    elif path.endswith('.csv'):
+        return "text/csv"
+    elif path.endswith('.pdf'):
+        return "application/pdf"
+    
     # Default to text/plain
     return "text/plain"
 
-async def download_url(url: str) -> Dict[str, Any]:
-    """Download content from URL with security checks."""
+# Improved download function with better error handling and retry logic
+async def download_url(url: str, retries: int = 3) -> Dict[str, Any]:
+    """Download content from URL with security checks and retry logic."""
     if url in url_cache:
         print(f"Using cached version of URL: {url}", file=sys.stderr)
         return url_cache[url]
@@ -125,71 +151,90 @@ async def download_url(url: str) -> Dict[str, Any]:
     if not validate_url(url):
         raise ValueError(f"Invalid or unsafe URL: {url}")
     
-    try:
-        print(f"Downloading URL: {url}", file=sys.stderr)
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            # Download the content
-            print(f"Fetching content from URL: {url}", file=sys.stderr)
-            response = await client.get(url)
-            response.raise_for_status()
+    attempt = 0
+    last_error = None
+    
+    while attempt < retries:
+        attempt += 1
+        try:
+            print(f"Downloading URL: {url} (attempt {attempt}/{retries})", file=sys.stderr)
+            async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+                # Download the content
+                print(f"Fetching content from URL: {url}", file=sys.stderr)
+                response = await client.get(url)
+                response.raise_for_status()
+                
+                # Check actual content type and size
+                actual_content_type = detect_content_type(
+                    url, 
+                    response.headers.get("content-type", "")
+                )
+                print(f"GET result - Content type: {actual_content_type}, Size: {len(response.content)} bytes", file=sys.stderr)
+                
+                if actual_content_type not in ALLOWED_CONTENT_TYPES and not actual_content_type.startswith("text/"):
+                    raise ValueError(f"Unsupported content type: {actual_content_type}")
+                
+                if len(response.content) > MAX_FILE_SIZE:
+                    raise ValueError(f"URL content too large: {len(response.content)} bytes")
+                
+                # Save to file
+                filename = get_safe_filename(url)
+                filepath = os.path.join(DOWNLOAD_DIR, filename)
+                
+                print(f"Saving to file: {filepath}", file=sys.stderr)
+                with open(filepath, "wb") as f:
+                    f.write(response.content)
+                
+                # Extract text content for text-based formats
+                text_content = None
+                if actual_content_type.startswith("text/") or actual_content_type in ["application/json", "application/xml"]:
+                    try:
+                        text_content = response.text
+                        print(f"Extracted {len(text_content)} characters of text content", file=sys.stderr)
+                    except Exception as e:
+                        print(f"Failed to extract text content: {str(e)}", file=sys.stderr)
+                        text_content = "Unable to extract text content"
+                
+                # Create metadata
+                current_time = datetime.now()
+                metadata = {
+                    "url": url,
+                    "content_type": actual_content_type,
+                    "size": len(response.content),
+                    "filename": filename,
+                    "filepath": filepath,
+                    "text_content": text_content,
+                    "timestamp": time.time(),
+                    "added_at": current_time.strftime("%Y-%m-%d %H:%M:%S")
+                }
+                
+                # Update cache
+                url_cache[url] = metadata
+                print(f"Successfully cached URL: {url}", file=sys.stderr)
+                return metadata
+                
+        except httpx.HTTPStatusError as e:
+            last_error = f"HTTP error: {e.response.status_code}"
+            print(f"HTTP error for URL {url}: {e.response.status_code}", file=sys.stderr)
             
-            # Check actual content type and size
-            actual_content_type = detect_content_type(
-                url, 
-                response.headers.get("content-type", "")
-            )
-            print(f"GET result - Content type: {actual_content_type}, Size: {len(response.content)} bytes", file=sys.stderr)
-            
-            if actual_content_type not in ALLOWED_CONTENT_TYPES and not actual_content_type.startswith("text/"):
-                raise ValueError(f"Unsupported content type: {actual_content_type}")
-            
-            if len(response.content) > MAX_FILE_SIZE:
-                raise ValueError(f"URL content too large: {len(response.content)} bytes")
-            
-            # Save to file
-            filename = get_safe_filename(url)
-            filepath = os.path.join(DOWNLOAD_DIR, filename)
-            
-            print(f"Saving to file: {filepath}", file=sys.stderr)
-            with open(filepath, "wb") as f:
-                f.write(response.content)
-            
-            # Extract text content for text-based formats
-            text_content = None
-            if actual_content_type.startswith("text/") or actual_content_type in ["application/json", "application/xml"]:
-                try:
-                    text_content = response.text
-                    print(f"Extracted {len(text_content)} characters of text content", file=sys.stderr)
-                except Exception as e:
-                    print(f"Failed to extract text content: {str(e)}", file=sys.stderr)
-                    text_content = "Unable to extract text content"
-            
-            # Create metadata
-            current_time = datetime.now()
-            metadata = {
-                "url": url,
-                "content_type": actual_content_type,
-                "size": len(response.content),
-                "filename": filename,
-                "filepath": filepath,
-                "text_content": text_content,
-                "timestamp": time.time(),
-                "added_at": current_time.strftime("%Y-%m-%d %H:%M:%S")
-            }
-            
-            # Update cache
-            url_cache[url] = metadata
-            print(f"Successfully cached URL: {url}", file=sys.stderr)
-            return metadata
-    except httpx.HTTPStatusError as e:
-        print(f"HTTP error for URL {url}: {e.response.status_code}", file=sys.stderr)
-        raise ValueError(f"HTTP error: {e.response.status_code}")
-    except httpx.RequestError as e:
-        print(f"Request error for URL {url}: {str(e)}", file=sys.stderr)
-        raise ValueError(f"Request error: {str(e)}")
-    except Exception as e:
-        print(f"Failed to download URL {url}: {str(e)}", file=sys.stderr)
-        raise ValueError(f"Failed to download URL: {str(e)}")
+            # Don't retry for client errors (4xx) except for 429 (too many requests)
+            if 400 <= e.response.status_code < 500 and e.response.status_code != 429:
+                break
+                
+        except httpx.RequestError as e:
+            last_error = f"Request error: {str(e)}"
+            print(f"Request error for URL {url}: {str(e)}", file=sys.stderr)
+        
+        except Exception as e:
+            last_error = f"Error: {str(e)}"
+            print(f"Failed to download URL {url}: {str(e)}", file=sys.stderr)
+        
+        # Wait before retrying, with exponential backoff
+        if attempt < retries:
+            await asyncio.sleep(2 ** attempt)  # 2, 4, 8 seconds
+    
+    # If we get here, all retries failed
+    raise ValueError(f"Failed to download URL after {retries} attempts: {last_error}")
 
 @mcp.tool()
 async def add_reference(url: str) -> str:
@@ -235,6 +280,35 @@ async def list_references() -> str:
     return result
 
 @mcp.tool()
+async def get_reference_content(url: str) -> str:
+    """Get the content of a specific reference.
+    
+    Args:
+        url: The URL of the reference to get content for
+    """
+    print(f"Tool called: get_reference_content({url})", file=sys.stderr)
+    if url not in url_cache:
+        return f"Reference not found: {url}"
+    
+    metadata = url_cache[url]
+    
+    # For text content, return directly
+    if metadata.get("text_content"):
+        # Limit the text size to a reasonable amount
+        text = metadata["text_content"]
+        if len(text) > 10000:
+            text = text[:10000] + "... [content truncated]"
+        return f"Content of {url}:\n\n{text}"
+    
+    # For binary content, just return metadata
+    return (
+        f"Binary content at {url}\n"
+        f"Type: {metadata['content_type']}\n"
+        f"Size: {metadata['size']} bytes\n"
+        f"Cannot display binary content directly."
+    )
+
+@mcp.tool()
 async def remove_reference(url: str) -> str:
     """Remove a specific reference.
     
@@ -270,8 +344,10 @@ async def clear_references() -> str:
     # Also delete files
     for filename in os.listdir(DOWNLOAD_DIR):
         try:
-            os.remove(os.path.join(DOWNLOAD_DIR, filename))
-            print(f"Deleted file: {filename}", file=sys.stderr)
+            full_path = os.path.join(DOWNLOAD_DIR, filename)
+            if os.path.isfile(full_path):
+                os.remove(full_path)
+                print(f"Deleted file: {filename}", file=sys.stderr)
         except Exception as e:
             print(f"Failed to delete file {filename}: {str(e)}", file=sys.stderr)
     
@@ -304,42 +380,7 @@ Available tools:
     
     return f"All references ({count}) have been cleared."
 
-@mcp.tool()
-async def get_reference_content(url: str) -> str:
-    """Get the content of a specific reference.
-    
-    Args:
-        url: The URL of the reference to get content for
-    """
-    print(f"Tool called: get_reference_content({url})", file=sys.stderr)
-    if url not in url_cache:
-        return f"Reference not found: {url}"
-    
-    metadata = url_cache[url]
-    
-    # For text content, return directly
-    if metadata.get("text_content"):
-        # Limit the text size to a reasonable amount
-        text = metadata["text_content"]
-        if len(text) > 10000:
-            text = text[:10000] + "... [content truncated]"
-        return f"Content of {url}:\n\n{text}"
-    
-    # For binary content, just return metadata
-    return (
-        f"Binary content at {url}\n"
-        f"Type: {metadata['content_type']}\n"
-        f"Size: {metadata['size']} bytes\n"
-        f"Cannot display binary content directly."
-    )
-
-# Print debug info about current state
-print(f"Resources available at startup: {list(url_cache.keys())}", file=sys.stderr)
-
-# Resource handler for Cursor
-# Replace the list_resources and read_resource functions with this single handler
-# Replace the resource handlers with this version that includes a URI pattern
-
+# Optimized resource handler
 @mcp.resource("reference://{filename}")
 async def handle_resources(filename=None):
     """Handle resources - both listing and reading."""
